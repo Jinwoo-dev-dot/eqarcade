@@ -564,24 +564,25 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     await waitForFirebase();
     const { db, doc, setDoc } = getFb();
     await setDoc(doc(db, 'players', playerDocId(game, studentId)), {
-      game, studentId, name, status:'pending', playCount:0, createdAt: Date.now()
+      game, studentId, name, status:'pending', createdAt: Date.now()
     });
   }
 
-  // 승인된 플레이어가 실제로 게임에 입장하는 순간 호출:
-  // 플레이 횟수를 올리고, 다음 로그인부터는 다시 관리자 승인이 필요하도록 상태를 되돌린다.
-  // 네트워크 문제로 조용히 실패하는 일이 없도록, 쓰기 후 실제로 반영됐는지 다시 읽어서 확인하고
-  // 실패하면 짧은 간격으로 최대 3번까지 자동 재시도한다.
-  async function markPlayedAndRequireReapproval(docId, newPlayCount){
+  // 승인된 플레이어가 실제로 게임에 입장하는 순간 호출: 다음 로그인부터는 다시 관리자
+  // 승인이 필요하도록 상태를 되돌린다. Firestore 보안 규칙이 players 문서에 새 필드를
+  // 추가하는 걸 막고 있을 수 있으므로, 원래부터 쓰기가 되던 status 필드만 건드린다
+  // (플레이 횟수는 이 문서에 저장하지 않고 game_records에서 세어서 구한다 — 아래 참고).
+  // 실패 시 최대 3번까지 자동 재시도하고, 실제로 반영됐는지 다시 읽어서 확인한다.
+  async function markPlayedAndRequireReapproval(docId){
     await waitForFirebase();
-    const { db, doc, setDoc, getDoc } = getFb();
+    const { db, doc, updateDoc, getDoc } = getFb();
     const ref = doc(db, 'players', docId);
     for(let attempt = 1; attempt <= 3; attempt++){
       try{
-        await setDoc(ref, { status:'pending', playCount:newPlayCount, lastPlayedAt: Date.now() }, { merge:true });
+        await updateDoc(ref, { status:'pending' });
         const verifySnap = await getDoc(ref);
         const verifyData = verifySnap.exists() ? verifySnap.data() : null;
-        if(verifyData && verifyData.status === 'pending' && verifyData.playCount === newPlayCount){
+        if(verifyData && verifyData.status === 'pending'){
           return true; // 실제로 반영된 것을 확인함
         }
         console.error('[EQ ARCADE] 재승인 상태 반영 확인 실패, 재시도', attempt, verifyData);
@@ -599,6 +600,19 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     await updateDoc(doc(db, 'players', docId), { status });
   }
 
+  // 플레이 횟수는 players 문서에 필드를 추가하지 않고, 이미 쓰기가 되는 것이 확인된
+  // game_records 컬렉션에서 해당 학번의 기록 개수를 세어서 구한다.
+  function countPlaysByStudent(records){
+    const counts = new Map(); // `${game}__${studentId}` -> count
+    records.forEach(r => {
+      if(!r.studentId) return;
+      const key = `${r.game}__${r.studentId}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return counts;
+  }
+
+
   async function getRecords(){
     await waitForFirebase();
     const { db, collection, getDocs } = getFb();
@@ -606,6 +620,11 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     const list = [];
     snap.forEach(d => list.push({ id: d.id, ...d.data() }));
     return list;
+  }
+
+  async function countPlaysForStudent(game, studentId){
+    const records = await getRecords();
+    return records.filter(r => r.game === game && r.studentId === studentId).length;
   }
 
   async function addRecord(record){
@@ -710,6 +729,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
   async function refreshAdminDashboard(){
     const players = await getPlayers(adminSelectedGame);
     const records = await getRecords();
+    const playCounts = countPlaysByStudent(records); // `${game}__${studentId}` -> count
 
     const pending = players.filter(p => p.status === 'pending');
     const approved = players.filter(p => p.status === 'approved');
@@ -734,7 +754,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
       pending.slice().sort((a,b)=>a.createdAt-b.createdAt).forEach(p => {
         const row = document.createElement('div');
         row.className = 'participant-row';
-        const playCount = p.playCount || 0;
+        const playCount = playCounts.get(`${p.game}__${p.studentId}`) || 0;
         const requestBadge = playCount > 0
           ? `<span class="status-pill pending" style="margin-left:6px;">${playCount + 1}번째 신청</span>`
           : '';
@@ -769,7 +789,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
         const row = document.createElement('div');
         row.className = 'participant-row';
         const statusLabel = { approved:'승인됨', pending:'대기중', rejected:'거절됨' }[p.status] || p.status;
-        const playCount = p.playCount || 0;
+        const playCount = playCounts.get(`${p.game}__${p.studentId}`) || 0;
         const playMeta = playCount > 0 ? ` · 총 ${playCount}회 플레이` : ' · 플레이 기록 없음';
         row.innerHTML = `
           <div class="participant-info">
@@ -878,7 +898,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     }
 
     if(found.status === 'pending'){
-      const playCount = found.playCount || 0;
+      const playCount = await countPlaysForStudent(currentGameKey, studentId);
       $('pendingMsg').textContent = playCount > 0
         ? `아직 관리자 승인 대기 중입니다. (이번이 ${playCount + 1}번째 플레이 신청이에요) 승인 후 다시 로그인해 주세요.`
         : '아직 관리자 승인 대기 중입니다. 승인 후 다시 로그인해 주세요.';
@@ -890,17 +910,17 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
       return;
     }
 
-    // 승인 완료 -> 이번 플레이를 기록하고, 다음 로그인부터는 다시 승인이 필요하도록 되돌린 뒤 게임 실행
-    const newPlayCount = (found.playCount || 0) + 1;
+    // 승인 완료 -> 다음 로그인부터는 다시 승인이 필요하도록 상태를 되돌린 뒤 게임 실행
+    // (이번 플레이 자체는 게임이 끝나고 game_records에 기록되면서 플레이 횟수에 자동으로 반영된다)
     const btnLogin = $('btnPlayerLogin');
     btnLogin.disabled = true;
-    const savedOk = await markPlayedAndRequireReapproval(found.id, newPlayCount);
+    const savedOk = await markPlayedAndRequireReapproval(found.id);
     btnLogin.disabled = false;
     if(!savedOk){
       showMsg('playerLoginMsg','error','서버 연결이 원활하지 않아요. 잠시 후 다시 시도해 주세요.');
       return;
     }
-    currentPlayer = { id: found.id, name: found.name, studentId: found.studentId, playCount: newPlayCount };
+    currentPlayer = { id: found.id, name: found.name, studentId: found.studentId };
     openGame(currentGameKey);
   });
 
@@ -920,6 +940,9 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     // 랭킹은 별도 컬렉션이 아니라 이미 쓰기/읽기 권한이 확인된 game_records 컬렉션을 기반으로 계산해서
     // Firestore 보안 규칙 문제로 랭킹을 못 불러오는 상황을 원천적으로 피한다. 닉네임도 따로 받지 않고
     // 참여자 로그인 때 쓴 이름(studentId 기준)을 그대로 사용한다.
+    // 주의: game_records 문서는 기존에 쓰기가 허용되던 필드(game, playerId, playerName, studentId,
+    // summary, at)만 사용한다 — 별도 score 필드를 추가하면 Firestore 보안 규칙에 막힐 수 있으므로
+    // 점수는 summary 문자열("이름 1234점")에서 파싱해서 구한다.
     if(gameKey === 'dribble'){
       const player = currentPlayer; // 이 게임 진입 시점의 플레이어를 캡처(이후 currentPlayer가 바뀌어도 영향 없음)
       iframe.onload = () => {
@@ -938,7 +961,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
               await addRecord({
                 game: 'dribble', playerId: player.id, playerName: player.name,
                 studentId: player.studentId || '', summary: `${player.name} ${score.toLocaleString()}점`,
-                score, at: Date.now()
+                at: Date.now()
               });
               return { best, updated: isNewBest };
             },
@@ -959,6 +982,15 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     showView('view-game-frame');
   }
 
+  // summary 문자열("이름 1234점")에서 점수를 숫자로 뽑아낸다. score를 별도 필드로
+  // 저장하지 않고, 이미 쓰기가 허용된 summary 필드에서 파싱해서 구하기 위함.
+  function parseScoreFromSummary(summary){
+    const m = String(summary || '').match(/([\d,]+)\s*점/);
+    if(!m) return null;
+    const n = parseInt(m[1].replace(/,/g, ''), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
   // ---------- 화학 드리블 러너 랭킹 (game_records 컬렉션 기반, 학번 단위 최고점) ----------
   async function fetchDribbleLeaderboard(limit){
     await waitForFirebase();
@@ -967,11 +999,13 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     const bestByStudent = new Map();
     snap.forEach(d => {
       const r = d.data();
-      if(r.game !== 'dribble' || typeof r.score !== 'number') return;
+      if(r.game !== 'dribble') return;
+      const score = parseScoreFromSummary(r.summary);
+      if(score === null) return;
       const key = r.studentId || r.playerName;
       const existing = bestByStudent.get(key);
-      if(!existing || r.score > existing.score){
-        bestByStudent.set(key, { nickname: r.playerName, score: r.score });
+      if(!existing || score > existing.score){
+        bestByStudent.set(key, { nickname: r.playerName, score });
       }
     });
     const list = Array.from(bestByStudent.values()).sort((a,b) => b.score - a.score);
@@ -985,9 +1019,10 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     let best = null;
     snap.forEach(d => {
       const r = d.data();
-      if(r.game === 'dribble' && r.studentId === studentId && typeof r.score === 'number'){
-        if(best === null || r.score > best) best = r.score;
-      }
+      if(r.game !== 'dribble' || r.studentId !== studentId) return;
+      const score = parseScoreFromSummary(r.summary);
+      if(score === null) return;
+      if(best === null || score > best) best = score;
     });
     return best;
   }
@@ -999,10 +1034,12 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     const bestByStudent = new Map();
     snap.forEach(d => {
       const r = d.data();
-      if(r.game !== 'dribble' || typeof r.score !== 'number') return;
+      if(r.game !== 'dribble') return;
+      const s = parseScoreFromSummary(r.summary);
+      if(s === null) return;
       const key = r.studentId || r.playerName;
       const existing = bestByStudent.get(key);
-      if(existing === undefined || r.score > existing) bestByStudent.set(key, r.score);
+      if(existing === undefined || s > existing) bestByStudent.set(key, s);
     });
     let higher = 0;
     bestByStudent.forEach((s) => { if(s > score) higher++; });
