@@ -10,7 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
-    getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc,
+    getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
     onSnapshot, addDoc, query, orderBy
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -28,7 +28,7 @@
 
   // 전역에 노출해서 아래 일반 <script>에서 사용할 수 있게 함
   window.__fb = {
-    db, collection, doc, setDoc, getDoc, getDocs, updateDoc,
+    db, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
     onSnapshot, addDoc, query, orderBy
   };
   window.__fbReady = true;
@@ -371,6 +371,7 @@
     <button class="game-tab active" data-game="sweeper">🧪 산·염기 지뢰찾기</button>
     <button class="game-tab" data-game="worldcup">⚽ 화학 월드컵 승부차기</button>
     <button class="game-tab" data-game="dribble">🏃 화학 드리블 러너</button>
+    <button class="mini-btn reject" id="btnResetRanking" style="margin-left:auto;">🗑 이 게임 랭킹 초기화</button>
   </div>
 
   <div class="admin-tabs">
@@ -622,6 +623,18 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     return list;
   }
 
+async function resetGameRecords(gameKey){
+  await waitForFirebase();
+  const { db, collection, getDocs, deleteDoc, doc } = getFb();
+  const snap = await getDocs(collection(db, 'game_records'));
+  const jobs = [];
+  snap.forEach(d => {
+    if(d.data().game === gameKey) jobs.push(deleteDoc(doc(db, 'game_records', d.id)));
+  });
+  await Promise.all(jobs);
+}
+
+
   async function countPlaysForStudent(game, studentId){
     const records = await getRecords();
     return records.filter(r => r.game === game && r.studentId === studentId).length;
@@ -865,6 +878,25 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
       refreshAdminDashboard();
     });
   });
+
+$('btnResetRanking').addEventListener('click', async () => {
+  const label = GAME_LABELS[adminSelectedGame].name;
+  if(!confirm(`정말 "${label}"의 랭킹/게임 기록을 전부 삭제할까요?\n이 작업은 되돌릴 수 없습니다.`)) return;
+  const btn = $('btnResetRanking');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = '삭제 중…';
+  try {
+    await resetGameRecords(adminSelectedGame);
+    await refreshAdminDashboard();
+  } catch(e){
+    alert('삭제 중 오류가 발생했어요. 다시 시도해 주세요.');
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
 
   // ---------- 참여자 로그인 (학번+이름, 게임별 분리, 최초 입력 시 자동 가입신청) ----------
   $('btnPlayerLogin').addEventListener('click', async () => {
