@@ -10,7 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
-    getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
+    getFirestore, collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc,
     onSnapshot, addDoc, query, orderBy
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -28,7 +28,7 @@
 
   // 전역에 노출해서 아래 일반 <script>에서 사용할 수 있게 함
   window.__fb = {
-    db, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
+    db, collection, doc, setDoc, getDoc, getDocFromServer, getDocs, updateDoc, deleteDoc,
     onSnapshot, addDoc, query, orderBy
   };
   window.__fbReady = true;
@@ -555,10 +555,16 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
 
   async function findPlayer(game, studentId){
     await waitForFirebase();
-    const { db, doc, getDoc } = getFb();
+    const { db, doc, getDocFromServer, getDoc } = getFb();
     const ref = doc(db, 'players', playerDocId(game, studentId));
-    const snap = await getDoc(ref);
-    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    try{
+      const snap = await getDocFromServer(ref);
+      return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    }catch(e){
+      console.error('[EQ ARCADE] 서버 조회 실패, 캐시로 재시도', e);
+      const snap = await getDoc(ref);
+      return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    }
   }
 
   async function createPlayer(game, studentId, name){
