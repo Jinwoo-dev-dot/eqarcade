@@ -411,11 +411,15 @@
 
   <div class="admin-panel active" id="tab-wallets">
     <div class="card" style="margin-bottom:16px;">
-      <div class="setup-label" style="margin-bottom:12px;">학번으로 찾기 · 또는 QR 스캔으로 바로 찾기</div>
+      <div class="setup-label" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <span>학번으로 찾기 · 또는 QR 스캔으로 바로 찾기</span>
+        <span style="font-weight:400; font-size:11px; color:var(--text-faint2);">마지막 확인: <span id="walletUpdatedAt">-</span></span>
+      </div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <input type="text" id="walletSearchInput" placeholder="학번으로 검색" style="flex:1; min-width:140px; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-kr);">
         <button class="mini-btn approve" id="btnExactLookup">🔍 정확히 조회</button>
         <button class="mini-btn approve" id="btnScanQrTopup">📷 QR 스캔</button>
+        <button class="mini-btn approve" id="btnRefreshWallets">🔄 잔액 새로고침</button>
       </div>
       <div class="msg-banner" id="walletSearchMsg" style="margin-top:12px;"></div>
     </div>
@@ -440,6 +444,16 @@
     </div>
     <button class="btn-primary" id="btnSaveGamePrice" style="margin-top:16px;">가격·보상 저장</button>
     <div class="msg-banner" id="priceMsg" style="margin-top:14px;"></div>
+
+    <div class="card" style="margin-top:20px;">
+      <div class="setup-label" style="margin-bottom:10px;">🔓 관리자 허용 코드 (모든 게임 공통)</div>
+      <div class="sub" style="margin-bottom:16px;">코인이 없어도 되는 사람(선생님 테스트, 특별 허용 학생 등)에게 알려줄 코드예요. 참여자 화면 하단 "코인 없이 입장"란에 이 코드를 입력하면 결제 없이 바로 게임이 열려요. 비워두면 이 기능이 꺼져요.</div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input type="text" id="overrideCodeSetting" placeholder="예: sada2026" autocomplete="off" style="flex:1; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-dp); font-size:15px;">
+        <button class="btn-primary" id="btnSaveOverrideCode" style="width:auto; padding:12px 22px; margin-top:0;">저장</button>
+      </div>
+      <div class="msg-banner" id="overrideCodeMsg" style="margin-top:14px;"></div>
+    </div>
   </div>
   <div class="admin-panel" id="tab-records">
     <div id="recordsList"></div>
@@ -527,6 +541,15 @@
     <video id="playerScanVideo" playsinline muted style="width:100%; border:2px solid var(--line); background:#000; margin-bottom:14px;"></video>
     <div id="playerScanStatus" style="font-size:12.5px; color:var(--text-dim); margin-bottom:14px;">📷 QR을 스캔 중이에요…</div>
     <button class="btn-secondary" id="btnRescan" style="display:none;">🔄 다시 스캔하기</button>
+
+    <div style="margin-top:22px; padding-top:18px; border-top:2px dashed var(--line);">
+      <div style="font-size:11px; color:var(--text-faint2); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">코인 없이 입장 (관리자 허용)</div>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="overrideNameInput" placeholder="이름" style="flex:1; min-width:0; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-kr); font-size:13px;">
+        <input type="text" id="overrideCodeInput" placeholder="허용 코드" autocomplete="off" style="flex:1; min-width:0; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-dp); font-size:13px;">
+      </div>
+      <button class="btn-secondary" id="btnOverrideEnter" style="margin-top:10px;">🔓 코드로 바로 입장하기</button>
+    </div>
   </div>
 </div>
 
@@ -621,6 +644,24 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     const data = await res.json().catch(() => ({}));
     if(!res.ok) throw new Error(data.message || 'SADA API 오류가 발생했어요.');
     return data;
+  }
+
+  // QR의 student_hash 값은 "한 번 결제에 쓰이면 즉시 소멸"되고 90초만 유효하다(SADA 설계).
+  // 그래서 같은 QR 화면을 새로고침 없이 두 번째로 스캔하면 이미 소멸된 값이라 실패하는 게
+  // 정상 동작이다 — 이걸 그냥 "SADA API 오류"라고만 보여주면 왜 안 되는지 헷갈리니,
+  // 이 경우엔 원인과 해결 방법을 바로 알려준다.
+  function friendlySadaError(e){
+    const msg = String(e && e.message || '');
+    if(msg.includes('찾을 수 없') || msg.includes('만료')){
+      return `${msg} → 이 QR은 이미 한 번 쓰였거나 90초가 지나 만료된 값이에요. 학생에게 QR 화면을 새로고침(다시 열기)해달라고 한 뒤 다시 스캔해 주세요.`;
+    }
+    if(msg.includes('부족')){
+      return `${msg} → 코인이 부족해서 처리할 수 없어요.`;
+    }
+    if(msg.toLowerCase().includes('failed to fetch') || msg.toLowerCase().includes('networkerror')){
+      return `${msg} → 인터넷 연결을 확인해 주세요.`;
+    }
+    return msg;
   }
 
   // 방금 스캔한 QR의 해시값으로 "누구인지"만 조회 (소모되지 않음, 90초간 유효)
@@ -805,6 +846,22 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     await setDoc(doc(db, 'game_records', '_gamePrices'), { [`${gameKey}_reward`]: reward }, { merge: true });
   }
 
+  // ---------- 관리자 허용 코드 (코인 없이 입장) ----------
+  // 결제가 필요 없는 사람(선생님 테스트, 특별히 허용된 학생 등)을 위해, 이 코드를 알면
+  // QR 결제 없이 바로 게임에 입장할 수 있게 한다. 모든 게임에 공통으로 적용되는 코드 하나다.
+  async function getOverrideCode(){
+    await waitForFirebase();
+    const { db, doc, getDoc } = getFb();
+    const snap = await getDoc(doc(db, 'game_records', '_gamePrices'));
+    const data = snap.exists() ? snap.data() : {};
+    return data.override_code || '';
+  }
+  async function setOverrideCode(code){
+    await waitForFirebase();
+    const { db, doc, setDoc } = getFb();
+    await setDoc(doc(db, 'game_records', '_gamePrices'), { override_code: code }, { merge: true });
+  }
+
 
   async function getRecords(){
     await waitForFirebase();
@@ -965,6 +1022,7 @@ async function resetGameRecords(gameKey){
     $('rewardGameLabel').textContent = GAME_LABELS[adminSelectedGame].name;
     $('gamePriceInput').value = prices[adminSelectedGame] ?? 0;
     $('gameRewardInput').value = rewards[adminSelectedGame] ?? 0;
+    $('overrideCodeSetting').value = await getOverrideCode();
 
     // SADA 코인 지갑 목록 + 통계
     try{
@@ -972,12 +1030,25 @@ async function resetGameRecords(gameKey){
       __walletCache = students || [];
       $('statStudents').textContent = __walletCache.length;
       $('statCoins').textContent = fmtCoin(me && me.balance != null ? me.balance : 0) + ' (동아리 잔액)';
+      $('walletUpdatedAt').textContent = new Date().toLocaleTimeString('ko-KR');
       renderWalletList(__walletCache);
     }catch(e){
       console.error('[EQ ARCADE] SADA 코인 정보 조회 실패', e);
       $('walletList').innerHTML = `<div class="empty-note">코인 정보를 불러오지 못했어요: ${escapeHtml(e.message)}</div>`;
     }
   }
+  $('btnRefreshWallets').addEventListener('click', async () => {
+    const btn = $('btnRefreshWallets');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = '새로고침 중…';
+    try{
+      await refreshAdminDashboard();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
 
   function fmtCoin(n){
     return Math.round(Number(n) || 0).toLocaleString('ko-KR');
@@ -1127,6 +1198,28 @@ async function resetGameRecords(gameKey){
     }
   });
 
+  $('btnSaveOverrideCode').addEventListener('click', async () => {
+    hideMsg('overrideCodeMsg');
+    const code = $('overrideCodeSetting').value.trim();
+    const btn = $('btnSaveOverrideCode');
+    btn.disabled = true;
+    try{
+      await setOverrideCode(code);
+      const confirmed = await getOverrideCode();
+      if(confirmed !== code){
+        showMsg('overrideCodeMsg','error', '저장이 반영되지 않았어요. 다시 시도해 주세요.');
+      } else if(!code){
+        showMsg('overrideCodeMsg','info', '✅ 허용 코드를 비웠어요. "코인 없이 입장" 기능이 꺼졌어요.');
+      } else {
+        showMsg('overrideCodeMsg','info', `✅ 허용 코드가 "${confirmed}"로 저장된 것을 확인했어요.`);
+      }
+    }catch(e){
+      showMsg('overrideCodeMsg','error', '저장에 실패했어요: ' + e.message);
+    }finally{
+      btn.disabled = false;
+    }
+  });
+
   // ---------- 관리자: 학생 코인 지급 (QR 스캔은 어느 경우든 최종 확인 단계로 꼭 필요) ----------
   // SADA API 특성상 /transfer는 반드시 그 학생의 QR을 실제로 스캔해서 얻은 값(student_hash)
   // 이 있어야만 동작한다 (학번만으로는 절대 이체 불가 — 학생 동의 없이 임의로 돈을 옮기지
@@ -1171,7 +1264,7 @@ async function resetGameRecords(gameKey){
         $('topupModal').classList.add('show');
       }catch(e){
         console.error('[EQ ARCADE] QR 인식 실패', e);
-        alert('QR 인식에 실패했어요: ' + e.message + '\n다시 스캔해 주세요.');
+        alert('QR 인식에 실패했어요: ' + friendlySadaError(e) + '\n다시 스캔해 주세요.');
       }
     }, (err) => {
       $('qrScanMsg').className = 'msg-banner show error';
@@ -1205,7 +1298,7 @@ async function resetGameRecords(gameKey){
       await refreshAdminDashboard();
     }catch(e){
       console.error('[EQ ARCADE] /transfer 실패:', e.message, e);
-      showMsg('topupMsg','error','충전에 실패했어요: ' + e.message);
+      showMsg('topupMsg','error','충전에 실패했어요: ' + friendlySadaError(e));
       btn.disabled = false;
       btn.textContent = '코인 충전하기';
     }
@@ -1254,7 +1347,7 @@ async function resetGameRecords(gameKey){
         }catch(e){
           console.error('[EQ ARCADE] 지급용 QR 확인 실패', e);
           $('topupModal').classList.add('show');
-          showMsg('topupMsg','error', 'QR 확인에 실패했어요: ' + e.message);
+          showMsg('topupMsg','error', 'QR 확인에 실패했어요: ' + friendlySadaError(e));
           btn.disabled = false;
           btn.textContent = '금액 확인 후 QR로 지급하기';
         }
@@ -1281,6 +1374,8 @@ async function resetGameRecords(gameKey){
   function startPlayerEntryScan(){
     hideMsg('playerLoginMsg');
     $('btnRescan').style.display = 'none';
+    $('overrideNameInput').value = '';
+    $('overrideCodeInput').value = '';
     $('playerScanStatus').textContent = '📷 QR을 스캔 중이에요…';
     startQrScan($('playerScanVideo'), handlePlayerQrDecoded, (err) => {
       showMsg('playerLoginMsg','error','카메라를 열 수 없어요: ' + err.message);
@@ -1323,11 +1418,45 @@ async function resetGameRecords(gameKey){
       currentPlayer = { id: student.id, name: student.name, studentId: String(student.id) };
       openGame(currentGameKey);
     }catch(e){
-      showMsg('playerLoginMsg','error','QR 인식/결제에 실패했어요: ' + e.message);
+      showMsg('playerLoginMsg','error','QR 인식/결제에 실패했어요: ' + friendlySadaError(e));
       $('btnRescan').style.display = 'block';
     }
   }
   $('btnRescan').addEventListener('click', () => startPlayerEntryScan());
+
+  // ---------- 코인 없이 입장 (관리자 허용 코드) ----------
+  $('btnOverrideEnter').addEventListener('click', async () => {
+    hideMsg('playerLoginMsg');
+    const enteredCode = $('overrideCodeInput').value.trim();
+    const enteredName = $('overrideNameInput').value.trim();
+    if(!enteredCode){
+      showMsg('playerLoginMsg','error','허용 코드를 입력해 주세요.');
+      return;
+    }
+    if(!currentGameKey){
+      showMsg('playerLoginMsg','error','게임 선택 화면에서 다시 시도해 주세요.');
+      return;
+    }
+    const btn = $('btnOverrideEnter');
+    btn.disabled = true;
+    btn.textContent = '확인 중…';
+    try{
+      const savedCode = await getOverrideCode();
+      if(!savedCode || enteredCode !== savedCode){
+        showMsg('playerLoginMsg','error','허용 코드가 올바르지 않아요.');
+        return;
+      }
+      stopQrScan();
+      currentPlayer = { id: 'override-' + Date.now(), name: enteredName || '관리자 허용', studentId: '' };
+      console.log('[EQ ARCADE] 관리자 허용 코드로 무료 입장:', currentPlayer.name, '/ 게임:', currentGameKey);
+      openGame(currentGameKey);
+    }catch(e){
+      showMsg('playerLoginMsg','error','확인에 실패했어요: ' + e.message);
+    }finally{
+      btn.disabled = false;
+      btn.textContent = '🔓 코드로 바로 입장하기';
+    }
+  });
 
   // ---------- 게임 실행 ----------
   async function recordGameResult(game, summary){
@@ -1556,7 +1685,7 @@ async function resetGameRecords(gameKey){
           : `✅ ${fmtCoin(reward)}코인 지급 완료!`;
         setTimeout(() => exitToGameSelect(), 1500);
       }catch(e){
-        showMsg('rewardClaimMsg','error', '보상 지급에 실패했어요: ' + e.message);
+        showMsg('rewardClaimMsg','error', '보상 지급에 실패했어요: ' + friendlySadaError(e));
         setTimeout(() => startRewardClaim(gameKey, player, reward), 1500);
       }
     }, (err) => {
