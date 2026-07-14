@@ -749,7 +749,7 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
   // "Missing or insufficient permissions" 오류가 났다. 이 앱에서 읽기·쓰기·삭제까지
   // 실제로 전부 확인된 컬렉션은 game_records뿐이라, 그 안에 예약 문서(_gamePrices)로
   // 저장한다. game 필드가 없는 문서라 랭킹/기록 목록과 "랭킹 초기화"에는 전혀 섞이지 않는다.
-  const DEFAULT_GAME_PRICES = { sweeper: 0, worldcup: 0, dribble: 0 };
+  const DEFAULT_GAME_PRICES = { sweeper: 300, worldcup: 300, dribble: 300 };
   async function getGamePrices(){
     await waitForFirebase();
     const { db, doc, getDoc } = getFb();
