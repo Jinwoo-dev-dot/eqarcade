@@ -1048,7 +1048,17 @@ async function resetGameRecords(gameKey){
     btn.disabled = true;
     try{
       await setGamePrice(adminSelectedGame, val);
-      showMsg('priceMsg','info', `${GAME_LABELS[adminSelectedGame].name} 가격이 ${fmtCoin(val)}코인으로 저장됐어요.`);
+      // 실제로 저장이 잘 됐는지 바로 다시 읽어서 확인한다 (권한 문제 등으로 조용히
+      // 실패하는 경우를 놓치지 않기 위함).
+      const confirmed = await getGamePrices();
+      const savedVal = confirmed[adminSelectedGame];
+      console.log('[EQ ARCADE] 게임 가격 저장 확인 —', adminSelectedGame, ':', savedVal);
+      if(savedVal !== val){
+        showMsg('priceMsg','error', `저장이 반영되지 않았어요 (입력: ${fmtCoin(val)} / 실제 저장값: ${fmtCoin(savedVal)}). 다시 시도해 주세요.`);
+      } else {
+        $('gamePriceInput').value = savedVal;
+        showMsg('priceMsg','info', `✅ ${GAME_LABELS[adminSelectedGame].name} 가격이 ${fmtCoin(savedVal)}코인으로 저장된 것을 확인했어요.`);
+      }
     }catch(e){
       showMsg('priceMsg','error', '저장에 실패했어요: ' + e.message);
     }finally{
@@ -1138,14 +1148,31 @@ async function resetGameRecords(gameKey){
       const student = await sadaLookupHash(hash);
       const prices = await getGamePrices();
       const price = prices[currentGameKey] || 0;
+      console.log('[EQ ARCADE] 결제 확인 — 게임:', currentGameKey, '가격:', price, '학생 잔액:', student.balance);
+
       if(student.balance < price){
         $('pendingMsg').textContent = `${student.name}님, 코인이 부족해요. (보유 ${fmtCoin(student.balance)} / 필요 ${fmtCoin(price)}) 운영자에게 충전을 요청하세요.`;
         showView('view-pending');
         return;
       }
+
       if(price > 0){
+        $('playerScanStatus').textContent = `🪙 ${fmtCoin(price)}코인 결제 중…`;
         await sadaTransfer(hash, price, 'student_to_club', `${GAME_LABELS[currentGameKey].name} 이용료`);
+        // 실제로 잔액이 줄었는지 결제 직후 다시 조회해서 화면에 보여준다 (안 빠지는 것처럼
+        // 보이는 문제를 바로 확인할 수 있도록). 이 조회는 학번 기준이라 실패해도 게임
+        // 진행에는 영향을 주지 않는다.
+        try{
+          const after = await sadaGetStudent(student.id);
+          console.log('[EQ ARCADE] 결제 후 잔액:', after.balance, '(결제 전:', student.balance, ')');
+          $('playerScanStatus').textContent = `✅ 결제 완료! ${fmtCoin(student.balance)} → ${fmtCoin(after.balance)}코인`;
+        }catch(verifyErr){
+          console.warn('[EQ ARCADE] 결제 후 잔액 재조회 실패', verifyErr);
+          $('playerScanStatus').textContent = `✅ ${fmtCoin(price)}코인 결제 완료!`;
+        }
+        await new Promise(r => setTimeout(r, 900));
       }
+
       currentPlayer = { id: student.id, name: student.name, studentId: String(student.id) };
       openGame(currentGameKey);
     }catch(e){
