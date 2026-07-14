@@ -422,16 +422,24 @@
     <div id="walletList"></div>
   </div>
   <div class="admin-panel" id="tab-prices">
-    <div class="card">
+    <div class="card" style="margin-bottom:16px;">
       <div class="setup-label" style="margin-bottom:10px;">선택된 게임: <span id="priceGameLabel">-</span></div>
       <div class="sub" style="margin-bottom:16px;">이 게임을 시작할 때 학생 코인 지갑에서 차감되는 금액이에요. 0으로 설정하면 무료로 열립니다.</div>
       <div style="display:flex; gap:10px; align-items:center;">
         <input type="number" id="gamePriceInput" min="0" step="1" style="width:120px; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-dp); font-size:16px;">
         <span style="color:var(--text-dim); font-size:12.5px;">코인</span>
-        <button class="btn-primary" id="btnSaveGamePrice" style="width:auto; padding:12px 22px; margin-top:0;">저장</button>
       </div>
-      <div class="msg-banner" id="priceMsg" style="margin-top:14px;"></div>
     </div>
+    <div class="card">
+      <div class="setup-label" style="margin-bottom:10px;">🎁 게임 완료 보상 (<span id="rewardGameLabel">-</span>)</div>
+      <div class="sub" style="margin-bottom:16px;">게임을 끝까지 마치면 학생에게 다시 돌려주는 코인이에요. 0이면 보상 없이 바로 나가요. 보상이 있으면 게임이 끝난 뒤 QR을 한 번 더 스캔해서 받아가요 (입장할 때 쓴 QR 값은 이미 소멸돼서 재사용할 수 없어요).</div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <input type="number" id="gameRewardInput" min="0" step="1" style="width:120px; padding:12px 14px; border:2px solid var(--line); background:rgba(0,0,0,.3); color:var(--text); font-family:var(--font-dp); font-size:16px;">
+        <span style="color:var(--text-dim); font-size:12.5px;">코인</span>
+      </div>
+    </div>
+    <button class="btn-primary" id="btnSaveGamePrice" style="margin-top:16px;">가격·보상 저장</button>
+    <div class="msg-banner" id="priceMsg" style="margin-top:14px;"></div>
   </div>
   <div class="admin-panel" id="tab-records">
     <div id="recordsList"></div>
@@ -528,6 +536,19 @@
     <div class="icon">🪙</div>
     <h2>코인이 부족해요</h2>
     <p id="pendingMsg">코인이 더 필요해요. 운영자에게 충전을 요청하세요.</p>
+  </div>
+</div>
+
+<!-- ============ 8-2. 게임 완료 보상 받기 (QR 재스캔) ============ -->
+<div class="view" id="view-reward-claim">
+  <div class="card" style="text-align:center;">
+    <div class="eyebrow">Reward</div>
+    <h2 class="headline">🎁 보상 받기</h2>
+    <p class="sub" id="rewardClaimSub">수고했어요! QR을 한 번 더 비춰주면 보상 코인을 바로 드릴게요.</p>
+    <div class="msg-banner" id="rewardClaimMsg"></div>
+    <video id="rewardScanVideo" playsinline muted style="width:100%; border:2px solid var(--line); background:#000; margin-bottom:14px;"></video>
+    <div id="rewardScanStatus" style="font-size:12.5px; color:var(--text-dim); margin-bottom:14px;">📷 QR을 스캔 중이에요…</div>
+    <button class="btn-secondary" id="btnSkipReward">건너뛰고 나가기</button>
   </div>
 </div>
 
@@ -763,6 +784,26 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
     await setDoc(doc(db, 'game_records', '_gamePrices'), { [gameKey]: price }, { merge: true });
   }
 
+  // ---------- 게임 완료 보상 설정 (같은 문서에 "게임키_reward" 필드로 저장) ----------
+  // 학생이 게임을 마치면 동아리 -> 학생으로 코인을 돌려줄 수 있게 한다 (0이면 보상 없음).
+  const DEFAULT_GAME_REWARDS = { sweeper: 0, worldcup: 0, dribble: 0 };
+  async function getGameRewards(){
+    await waitForFirebase();
+    const { db, doc, getDoc } = getFb();
+    const snap = await getDoc(doc(db, 'game_records', '_gamePrices'));
+    const data = snap.exists() ? snap.data() : {};
+    return {
+      sweeper: data.sweeper_reward ?? DEFAULT_GAME_REWARDS.sweeper,
+      worldcup: data.worldcup_reward ?? DEFAULT_GAME_REWARDS.worldcup,
+      dribble: data.dribble_reward ?? DEFAULT_GAME_REWARDS.dribble,
+    };
+  }
+  async function setGameReward(gameKey, reward){
+    await waitForFirebase();
+    const { db, doc, setDoc } = getFb();
+    await setDoc(doc(db, 'game_records', '_gamePrices'), { [`${gameKey}_reward`]: reward }, { merge: true });
+  }
+
 
   async function getRecords(){
     await waitForFirebase();
@@ -916,10 +957,13 @@ async function resetGameRecords(gameKey){
       });
     }
 
-    // 가격 설정 탭 갱신
+    // 가격/보상 설정 탭 갱신
     const prices = await getGamePrices();
+    const rewards = await getGameRewards();
     $('priceGameLabel').textContent = GAME_LABELS[adminSelectedGame].name;
+    $('rewardGameLabel').textContent = GAME_LABELS[adminSelectedGame].name;
     $('gamePriceInput').value = prices[adminSelectedGame] ?? 0;
+    $('gameRewardInput').value = rewards[adminSelectedGame] ?? 0;
 
     // SADA 코인 지갑 목록 + 통계
     try{
@@ -1039,25 +1083,33 @@ async function resetGameRecords(gameKey){
 
   $('btnSaveGamePrice').addEventListener('click', async () => {
     hideMsg('priceMsg');
-    const val = parseInt($('gamePriceInput').value, 10);
-    if(!Number.isFinite(val) || val < 0){
-      showMsg('priceMsg','error','0 이상의 숫자를 입력해 주세요.');
+    const priceVal = parseInt($('gamePriceInput').value, 10);
+    const rewardVal = parseInt($('gameRewardInput').value, 10) || 0;
+    if(!Number.isFinite(priceVal) || priceVal < 0){
+      showMsg('priceMsg','error','가격에 0 이상의 숫자를 입력해 주세요.');
+      return;
+    }
+    if(rewardVal < 0){
+      showMsg('priceMsg','error','보상에 0 이상의 숫자를 입력해 주세요.');
       return;
     }
     const btn = $('btnSaveGamePrice');
     btn.disabled = true;
     try{
-      await setGamePrice(adminSelectedGame, val);
+      await setGamePrice(adminSelectedGame, priceVal);
+      await setGameReward(adminSelectedGame, rewardVal);
       // 실제로 저장이 잘 됐는지 바로 다시 읽어서 확인한다 (권한 문제 등으로 조용히
       // 실패하는 경우를 놓치지 않기 위함).
-      const confirmed = await getGamePrices();
-      const savedVal = confirmed[adminSelectedGame];
-      console.log('[EQ ARCADE] 게임 가격 저장 확인 —', adminSelectedGame, ':', savedVal);
-      if(savedVal !== val){
-        showMsg('priceMsg','error', `저장이 반영되지 않았어요 (입력: ${fmtCoin(val)} / 실제 저장값: ${fmtCoin(savedVal)}). 다시 시도해 주세요.`);
+      const [confirmedPrices, confirmedRewards] = await Promise.all([getGamePrices(), getGameRewards()]);
+      const savedPrice = confirmedPrices[adminSelectedGame];
+      const savedReward = confirmedRewards[adminSelectedGame];
+      console.log('[EQ ARCADE] 가격/보상 저장 확인 —', adminSelectedGame, '가격:', savedPrice, '보상:', savedReward);
+      if(savedPrice !== priceVal || savedReward !== rewardVal){
+        showMsg('priceMsg','error', `저장이 반영되지 않았어요 (가격 ${fmtCoin(savedPrice)} / 보상 ${fmtCoin(savedReward)}로 저장됨). 다시 시도해 주세요.`);
       } else {
-        $('gamePriceInput').value = savedVal;
-        showMsg('priceMsg','info', `✅ ${GAME_LABELS[adminSelectedGame].name} 가격이 ${fmtCoin(savedVal)}코인으로 저장된 것을 확인했어요.`);
+        $('gamePriceInput').value = savedPrice;
+        $('gameRewardInput').value = savedReward;
+        showMsg('priceMsg','info', `✅ ${GAME_LABELS[adminSelectedGame].name}: 가격 ${fmtCoin(savedPrice)}코인 · 보상 ${fmtCoin(savedReward)}코인으로 저장된 것을 확인했어요.`);
       }
     }catch(e){
       showMsg('priceMsg','error', '저장에 실패했어요: ' + e.message);
@@ -1353,23 +1405,72 @@ async function resetGameRecords(gameKey){
   });
 
   // 게임 iframe에서 postMessage로 결과를 보내면 기록에 남김 (게임 파일이 지원하는 경우)
-  // 결과 화면을 잠깐 볼 수 있도록 몇 초 기다린 뒤, 자동으로 게임 선택 화면으로 돌아간다.
-  // (예전에는 "나가기" 버튼을 직접 눌러야만 세 게임에서 빠져나올 수 있었다.)
+  // 보상이 설정돼 있으면 결과 화면을 잠깐 보여준 뒤 "보상 받기" QR 스캔 화면으로 넘어가고,
+  // 보상이 없으면(0코인) 예전처럼 몇 초 뒤 자동으로 게임 선택 화면으로 돌아간다.
   const AUTO_EXIT_DELAY_MS = 4500;
+  function exitToGameSelect(){
+    $('gameFrame').srcdoc = 'about:blank';
+    currentPlayer = null;
+    currentGameKey = null;
+    showView('view-game-select');
+  }
   window.addEventListener('message', (evt) => {
     if(evt.data && evt.data.type === 'lg:gameResult'){
       const finishedGame = evt.data.game;
+      const finishedPlayer = currentPlayer; // 결과 처리 도중 currentPlayer가 바뀌어도 영향 없게 캡처
       recordGameResult(finishedGame, evt.data.summary);
-      setTimeout(() => {
+      setTimeout(async () => {
         // 그 사이에 사용자가 이미 나갔거나 다른 게임으로 이동했다면 건드리지 않는다.
         if(currentGameKey !== finishedGame) return;
-        $('gameFrame').srcdoc = 'about:blank';
-        currentPlayer = null;
-        currentGameKey = null;
-        showView('view-game-select');
+        let reward = 0;
+        try{
+          const rewards = await getGameRewards();
+          reward = rewards[finishedGame] || 0;
+        }catch(e){ console.error('[EQ ARCADE] 보상 설정 조회 실패', e); }
+
+        if(reward > 0 && finishedPlayer){
+          $('gameFrame').srcdoc = 'about:blank';
+          startRewardClaim(finishedGame, finishedPlayer, reward);
+        } else {
+          exitToGameSelect();
+        }
       }, AUTO_EXIT_DELAY_MS);
     }
   });
+
+  // ---------- 게임 완료 보상 받기: QR 재스캔 → club_to_student 지급 ----------
+  function startRewardClaim(gameKey, player, reward){
+    hideMsg('rewardClaimMsg');
+    $('rewardClaimSub').textContent = `${player.name}님, 수고했어요! QR을 한 번 더 비춰주면 ${fmtCoin(reward)}코인을 바로 드릴게요.`;
+    $('rewardScanStatus').textContent = '📷 QR을 스캔 중이에요…';
+    showView('view-reward-claim');
+    startQrScan($('rewardScanVideo'), async (hash) => {
+      $('rewardScanStatus').textContent = '지급 중…';
+      try{
+        const scanned = await sadaLookupHash(hash);
+        // 스캔한 QR이 방금 플레이한 학생 본인 것인지 확인 (다른 사람 QR로 보상을 가로채지 못하게).
+        if(String(scanned.id) !== String(player.studentId)){
+          showMsg('rewardClaimMsg','error', `${player.name}님의 QR이 아니에요. ${player.name}님 본인 QR을 스캔해 주세요.`);
+          startRewardClaim(gameKey, player, reward);
+          return;
+        }
+        await sadaTransfer(hash, reward, 'club_to_student', `${GAME_LABELS[gameKey].name} 완료 보상`);
+        const after = await sadaGetStudent(scanned.id).catch(() => null);
+        $('rewardScanStatus').textContent = after
+          ? `✅ ${fmtCoin(reward)}코인 지급 완료! ${fmtCoin(scanned.balance)} → ${fmtCoin(after.balance)}코인`
+          : `✅ ${fmtCoin(reward)}코인 지급 완료!`;
+        setTimeout(() => exitToGameSelect(), 1500);
+      }catch(e){
+        showMsg('rewardClaimMsg','error', '보상 지급에 실패했어요: ' + e.message);
+        setTimeout(() => startRewardClaim(gameKey, player, reward), 1500);
+      }
+    }, (err) => {
+      showMsg('rewardClaimMsg','error','카메라를 열 수 없어요: ' + err.message);
+    }, (hint) => {
+      $('rewardScanStatus').textContent = '📷 ' + hint;
+    });
+  }
+  $('btnSkipReward').addEventListener('click', () => exitToGameSelect());
 
 })();
 </script>
