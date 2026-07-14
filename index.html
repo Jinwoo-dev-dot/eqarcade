@@ -745,18 +745,21 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
   }
 
   // ---------- 게임 가격 설정 (Firestore) ----------
+  // 참고: 별도의 'settings' 컬렉션을 새로 만들면 이 프로젝트의 Firestore 보안 규칙에
+  // 허용돼 있지 않아 "Missing or insufficient permissions" 오류가 난다. 그래서 이미
+  // 읽기/쓰기가 확인된 'admins' 컬렉션 안에 예약된 문서 ID(_gamePrices)로 저장한다.
   const DEFAULT_GAME_PRICES = { sweeper: 0, worldcup: 0, dribble: 0 };
   async function getGamePrices(){
     await waitForFirebase();
     const { db, doc, getDoc } = getFb();
-    const snap = await getDoc(doc(db, 'settings', 'gamePrices'));
+    const snap = await getDoc(doc(db, 'admins', '_gamePrices'));
     const data = snap.exists() ? snap.data() : {};
     return { ...DEFAULT_GAME_PRICES, ...data };
   }
   async function setGamePrice(gameKey, price){
     await waitForFirebase();
     const { db, doc, setDoc } = getFb();
-    await setDoc(doc(db, 'settings', 'gamePrices'), { [gameKey]: price }, { merge: true });
+    await setDoc(doc(db, 'admins', '_gamePrices'), { [gameKey]: price }, { merge: true });
   }
 
 
