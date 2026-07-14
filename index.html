@@ -372,6 +372,7 @@
     <button class="game-tab" data-game="worldcup">⚽ 화학 월드컵 승부차기</button>
     <button class="game-tab" data-game="dribble">🏃 화학 드리블 러너</button>
     <button class="mini-btn reject" id="btnResetRanking" style="margin-left:auto;">🗑 이 게임 랭킹 초기화</button>
+    <button class="mini-btn reject" id="btnResetParticipants">🗑 이 게임 참여자 전체 삭제</button>
   </div>
 
   <div class="admin-tabs">
@@ -640,6 +641,17 @@ async function resetGameRecords(gameKey){
   await Promise.all(jobs);
 }
 
+async function resetGameParticipants(gameKey){
+    await waitForFirebase();
+    const { db, collection, getDocs, deleteDoc, doc } = getFb();
+    const snap = await getDocs(collection(db, 'players'));
+    const jobs = [];
+    snap.forEach(d => {
+      if(d.data().game === gameKey) jobs.push(deleteDoc(doc(db, 'players', d.id)));
+    });
+    await Promise.all(jobs);
+  }
+
 
   async function countPlaysForStudent(game, studentId){
     const records = await getRecords();
@@ -903,6 +915,24 @@ $('btnResetRanking').addEventListener('click', async () => {
     btn.textContent = original;
   }
 });
+$('btnResetParticipants').addEventListener('click', async () => {
+    const label = GAME_LABELS[adminSelectedGame].name;
+    if(!confirm(`정말 "${label}"의 참여자(승인+대기+거절) 전체를 삭제할까요?\n모든 학생이 처음부터 다시 가입 신청을 해야 합니다.\n이 작업은 되돌릴 수 없습니다.`)) return;
+    const btn = $('btnResetParticipants');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = '삭제 중…';
+    try {
+      await resetGameParticipants(adminSelectedGame);
+      await refreshAdminDashboard();
+    } catch(e){
+      alert('삭제 중 오류가 발생했어요. 다시 시도해 주세요.');
+      console.error(e);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
 
   // ---------- 참여자 로그인 (학번+이름, 게임별 분리, 최초 입력 시 자동 가입신청) ----------
   $('btnPlayerLogin').addEventListener('click', async () => {
