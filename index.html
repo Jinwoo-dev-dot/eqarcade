@@ -477,6 +477,7 @@
       <button class="mini-btn approve" data-quick="50">+50</button>
       <button class="mini-btn approve" data-quick="100">+100</button>
     </div>
+    <div class="msg-banner" id="topupMsg" style="margin-bottom:14px;"></div>
     <button class="modal-btn" id="btnConfirmTopup">코인 충전하기</button>
     <button class="modal-btn secondary" id="btnCloseTopup" style="display:none;">닫기</button>
   </div>
@@ -1135,8 +1136,10 @@ async function resetGameRecords(gameKey){
   let __topupTarget = null; // 목록에서 먼저 클릭해 정해둔 지급 대상 (💰 지급 버튼으로 시작한 경우)
 
   function openTopupFor(student){
+    console.log('[EQ ARCADE] 지급 대상 선택:', student);
     __topupHash = null;
     __topupTarget = student;
+    hideMsg('topupMsg');
     $('topupStudentName').textContent = `${student.name} (학번 ${student.id})`;
     $('topupStudentMeta').textContent = `현재 보유 코인(캐시): ${fmtCoin(student.balance)} · 확인을 위해 이 학생의 QR을 스캔해야 지급돼요.`;
     $('topupAmountInput').value = '';
@@ -1154,8 +1157,10 @@ async function resetGameRecords(gameKey){
       $('qrScanModal').classList.remove('show');
       try{
         const student = await sadaLookupHash(data);
+        console.log('[EQ ARCADE] QR 스캔으로 확인된 학생:', student);
         __topupHash = data;
         __topupTarget = null;
+        hideMsg('topupMsg');
         $('topupStudentName').textContent = `${student.name} (학번 ${student.id})`;
         $('topupStudentMeta').textContent = `현재 보유 코인: ${fmtCoin(student.balance)}`;
         $('topupAmountInput').value = '';
@@ -1165,6 +1170,7 @@ async function resetGameRecords(gameKey){
         $('btnCloseTopup').style.display = 'none';
         $('topupModal').classList.add('show');
       }catch(e){
+        console.error('[EQ ARCADE] QR 인식 실패', e);
         alert('QR 인식에 실패했어요: ' + e.message + '\n다시 스캔해 주세요.');
       }
     }, (err) => {
@@ -1188,28 +1194,33 @@ async function resetGameRecords(gameKey){
 
   async function finishTopup(hash, amount){
     const btn = $('btnConfirmTopup');
+    console.log('[EQ ARCADE] /transfer 호출 시도 — amount:', amount, 'type: club_to_student');
     try{
-      await sadaTransfer(hash, amount, 'club_to_student', 'EQ ARCADE 코인 충전');
+      const result = await sadaTransfer(hash, amount, 'club_to_student', 'EQ ARCADE 코인 충전');
+      console.log('[EQ ARCADE] /transfer 성공 응답:', result);
       btn.textContent = `✅ ${fmtCoin(amount)}코인 충전 완료!`;
       $('btnCloseTopup').style.display = 'block';
       __topupHash = null;
       __topupTarget = null;
       await refreshAdminDashboard();
     }catch(e){
-      alert('충전에 실패했어요: ' + e.message);
+      console.error('[EQ ARCADE] /transfer 실패:', e.message, e);
+      showMsg('topupMsg','error','충전에 실패했어요: ' + e.message);
       btn.disabled = false;
       btn.textContent = '코인 충전하기';
     }
   }
 
   $('btnConfirmTopup').addEventListener('click', async () => {
+    hideMsg('topupMsg');
     const amount = parseInt($('topupAmountInput').value, 10);
     if(!Number.isFinite(amount) || amount <= 0){
-      alert('충전할 코인 수를 입력해 주세요.');
+      showMsg('topupMsg','error','충전할 코인 수를 입력해 주세요.');
       return;
     }
     const btn = $('btnConfirmTopup');
     btn.disabled = true;
+    console.log('[EQ ARCADE] 지급 버튼 클릭 — amount:', amount, '__topupHash:', __topupHash, '__topupTarget:', __topupTarget);
 
     if(__topupHash){
       // 이미 QR을 먼저 스캔해서 확보한 경우 (📷 QR 스캔 버튼으로 시작한 흐름) — 바로 지급
@@ -1229,27 +1240,29 @@ async function resetGameRecords(gameKey){
         $('qrScanModal').classList.remove('show');
         try{
           const scanned = await sadaLookupHash(hash);
+          console.log('[EQ ARCADE] 지급용 QR 스캔 결과:', scanned, '/ 지급 대상:', target);
           if(String(scanned.id) !== String(target.id)){
-            alert(`스캔한 QR이 ${target.name}(학번 ${target.id})님 본인 것이 아니에요. 다시 시도해 주세요.`);
+            $('topupModal').classList.add('show');
+            showMsg('topupMsg','error', `스캔한 QR이 ${target.name}(학번 ${target.id})님 본인 것이 아니에요 (스캔된 학번: ${scanned.id}). 다시 시도해 주세요.`);
             btn.disabled = false;
             btn.textContent = '금액 확인 후 QR로 지급하기';
-            $('topupModal').classList.add('show');
             return;
           }
           $('topupModal').classList.add('show');
           btn.textContent = '충전 중…';
           await finishTopup(hash, amount);
         }catch(e){
-          alert('QR 확인에 실패했어요: ' + e.message);
+          console.error('[EQ ARCADE] 지급용 QR 확인 실패', e);
+          $('topupModal').classList.add('show');
+          showMsg('topupMsg','error', 'QR 확인에 실패했어요: ' + e.message);
           btn.disabled = false;
           btn.textContent = '금액 확인 후 QR로 지급하기';
-          $('topupModal').classList.add('show');
         }
       }, (err) => {
-        alert('카메라를 열 수 없어요: ' + err.message);
+        $('topupModal').classList.add('show');
+        showMsg('topupMsg','error', '카메라를 열 수 없어요: ' + err.message);
         btn.disabled = false;
         btn.textContent = '금액 확인 후 QR로 지급하기';
-        $('topupModal').classList.add('show');
       }, (hint) => {
         $('qrScanMsg').className = 'msg-banner show info';
         $('qrScanMsg').textContent = hint;
@@ -1258,7 +1271,7 @@ async function resetGameRecords(gameKey){
     }
 
     btn.disabled = false;
-    alert('지급 대상 정보가 없어요. 목록에서 다시 선택하거나 QR 스캔부터 시작해 주세요.');
+    showMsg('topupMsg','error','지급 대상 정보가 없어요. 목록에서 다시 선택하거나 QR 스캔부터 시작해 주세요.');
   });
   $('btnCloseTopup').addEventListener('click', () => {
     $('topupModal').classList.remove('show');
