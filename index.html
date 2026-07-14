@@ -745,21 +745,22 @@ const DRIBBLE_HTML = b64ToUtf8("PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9ImtvIj4KPGhl
   }
 
   // ---------- 게임 가격 설정 (Firestore) ----------
-  // 참고: 별도의 'settings' 컬렉션을 새로 만들면 이 프로젝트의 Firestore 보안 규칙에
-  // 허용돼 있지 않아 "Missing or insufficient permissions" 오류가 난다. 그래서 이미
-  // 읽기/쓰기가 확인된 'admins' 컬렉션 안에 예약된 문서 ID(_gamePrices)로 저장한다.
+  // 참고: 'settings'는 물론 'admins' 컬렉션도 쓰기(update) 권한이 없어서 여전히
+  // "Missing or insufficient permissions" 오류가 났다. 이 앱에서 읽기·쓰기·삭제까지
+  // 실제로 전부 확인된 컬렉션은 game_records뿐이라, 그 안에 예약 문서(_gamePrices)로
+  // 저장한다. game 필드가 없는 문서라 랭킹/기록 목록과 "랭킹 초기화"에는 전혀 섞이지 않는다.
   const DEFAULT_GAME_PRICES = { sweeper: 0, worldcup: 0, dribble: 0 };
   async function getGamePrices(){
     await waitForFirebase();
     const { db, doc, getDoc } = getFb();
-    const snap = await getDoc(doc(db, 'admins', '_gamePrices'));
+    const snap = await getDoc(doc(db, 'game_records', '_gamePrices'));
     const data = snap.exists() ? snap.data() : {};
     return { ...DEFAULT_GAME_PRICES, ...data };
   }
   async function setGamePrice(gameKey, price){
     await waitForFirebase();
     const { db, doc, setDoc } = getFb();
-    await setDoc(doc(db, 'admins', '_gamePrices'), { [gameKey]: price }, { merge: true });
+    await setDoc(doc(db, 'game_records', '_gamePrices'), { [gameKey]: price }, { merge: true });
   }
 
 
@@ -894,7 +895,7 @@ async function resetGameRecords(gameKey){
 
   async function refreshAdminDashboard(){
     const records = await getRecords();
-    $('statGames').textContent = records.length;
+    $('statGames').textContent = records.filter(r => GAME_LABELS[r.game]).length;
 
     // 게임 기록 (현재 선택된 게임 탭 기준으로 분리해서 표시) - SADA와 무관, Firestore 그대로 사용
     const recordsList = $('recordsList');
